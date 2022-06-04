@@ -1,0 +1,169 @@
+---
+
+- name: Ensure folder exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: etcd
+    mode: "0750"
+  when: item and item != ''
+  with_items:
+    - "{{ etcd_client_key_file | dirname }}"
+    - "{{ etcd_peer_key_file   | dirname }}"
+  tags: [ssl-certs]
+
+- name: Copy root certificates
+  copy:
+    content: "{{ item.content }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: etcd
+    mode: 0440
+  when: not item.content == ''
+  with_items:
+    - { content: "{{ etcd_ca_peer_crt_data|default('') }}",   dest: "{{  etcd_peer_trusted_ca_file }}" }
+    - { content: "{{ etcd_ca_peer_key_data|default('') }}",   dest: "{{ (etcd_peer_trusted_ca_file   | splitext)[0] }}.key" }
+    - { content: "{{ etcd_ca_client_crt_data|default('') }}", dest: "{{  etcd_client_trusted_ca_file }}" }
+    - { content: "{{ etcd_ca_client_key_data|default('') }}", dest: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}.key" }
+  no_log: true
+  tags: [ssl-certs]
+
+- name: Generate etcd private keys
+  community.crypto.openssl_privatekey:
+    force: no
+    path: "{{ item.dest }}"
+    owner: root
+    group: etcd
+    mode: 0440
+    type: "{{ etcd_cert_key_type }}"
+    size: "{{ etcd_cert_key_size }}"
+  when: item.when
+  with_items:
+    - { when: "{{ (etcd_ca_peer_key_data|default('')) == '' }}",   dest: "{{ (etcd_peer_trusted_ca_file   | splitext)[0] }}.key"       }
+    - { when: true,                         dest: "{{ etcd_peer_key_file }}"                                    }
+
+    - { when: "{{ (etcd_ca_client_key_data|default('')) == '' }}", dest: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}.key"       }
+    - { when: true,                         dest: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.key" }
+
+    - { when: "{{ etcd_client_key_file }}", dest: "{{ etcd_client_key_file }}"                                  }
+  no_log: true
+  tags: [ssl-certs]
+
+- name: Generate etcd root CSR
+  openssl_csr:
+    path: "{{ item.dest }}.csr"
+    privatekey_path: "{{ item.dest }}.key"
+    common_name: "{{ item.cn }}"
+    organization_name: "{{ item.o }}"
+    subject_alt_name: "{{ item.san }}"
+    basic_constraints: ['CA:TRUE']
+    basic_constraints_critical: true
+    key_usage: ['cRLSign','keyCertSign']
+    key_usage_critical: true
+    extended_key_usage: ['serverAuth','clientAuth']
+    mode: 0400
+  when: item.when
+  with_items:
+    - { when: "{{ (etcd_ca_peer_crt_data|default('')) == '' }}",   dest: "{{ (etcd_peer_trusted_ca_file   | splitext)[0] }}",
+        o: "Root etcd peer",     cn: "peer",   san: "email:root@etcd",    bc: ['CA:TRUE']  }
+    - { when: "{{ (etcd_ca_client_crt_data|default('')) == '' }}", dest: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}",
+        o: 'Root etcd client',   cn: "client", san: "email:root@etcd",    bc: ['CA:TRUE']  }
+  no_log: true
+  run_once: true
+  tags: [ssl-certs]
+
+- name: Generate CSR
+  openssl_csr:
+    path: "{{ item.csr }}"
+    privatekey_path: "{{ item.key }}"
+    common_name: "{{ item.cn }}"
+    subject_alt_name: "{{ item.san }}"
+    key_usage: ['digitalSignature','keyEncipherment']
+    key_usage_critical: true
+    extended_key_usage: "{{ item.ekey }}"
+    mode: 0400
+  when: item.when
+  with_items:
+    - { when: "{{ etcd_peer_cert_file }}",    csr: "{{ (etcd_peer_cert_file | splitext)[0] }}.csr",    key: "{{ etcd_peer_key_file }}",
+        cn: "{{ inventory_hostname }}",  san: "DNS:{{ inventory_hostname }},IP:{{ etcd_advertise_ip }},IP:127.0.0.1",                 ekey: ['serverAuth','clientAuth'] }
+
+    - { when: true,                           csr: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.csr",  key: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.key",
+        cn: "etcd",
+        san: "DNS:{{ groups[etcd_peer_group] | map('extract', hostvars, 'inventory_hostname') | join(',DNS:') }},IP:{{ groups[etcd_peer_group] | map('extract', hostvars, 'ansible_host') | join(',IP:') }},IP:127.0.0.1",
+        ekey: ['serverAuth','clientAuth'] }
+
+    - { when: "{{ etcd_client_cert_file }}",  csr: "{{ (etcd_client_cert_file | splitext)[0] }}.csr",  key: "{{ etcd_client_key_file }}",
+        cn: "{{ inventory_hostname }}",  san: "DNS:{{ inventory_hostname }},IP:{{ etcd_advertise_ip }},IP:127.0.0.1",                 ekey: ['clientAuth'] }
+  no_log: true
+  tags: [ssl-certs]
+
+- name: Sign certificates
+  openssl_certificate:
+    path: "{{ item.crt }}"
+    privatekey_path: "{{ item.key }}"
+    csr_path: "{{ item.csr }}"
+    ownca_path: "{{ item.ownca }}"
+    ownca_privatekey_path: "{{ (item.ownca | splitext)[0] }}.key"
+    provider: "{{ item.provider }}"
+    owner: root
+    group: etcd
+    mode: 0440
+  when: item.when
+  with_items:
+    - { when: "{{ (etcd_ca_peer_crt_data|default('')) == '' }}",            csr: "{{ (etcd_peer_trusted_ca_file | splitext)[0] }}.csr",
+        key: "{{ (etcd_peer_trusted_ca_file | splitext)[0] }}.key",
+        crt: "{{ etcd_peer_trusted_ca_file }}",                             provider: selfsigned, ownca: "{{ etcd_peer_trusted_ca_file }}" }
+
+    - { when: true,                           csr: "{{ (etcd_peer_cert_file | splitext)[0] }}.csr",
+        key: "{{ etcd_peer_key_file }}",
+        crt: "{{ etcd_peer_cert_file }}",                                   provider: ownca,      ownca: "{{ etcd_peer_trusted_ca_file }}" }
+
+    - { when: "{{ (etcd_ca_client_crt_data|default('')) == '' }}",          csr: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}.csr",
+        key: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}.key",
+        crt: "{{ etcd_client_trusted_ca_file }}",                           provider: selfsigned, ownca: "{{ etcd_client_trusted_ca_file }}" }
+
+    - { when: true,                           csr: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.csr", key: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.key",
+        crt: "{{ etcd_client_trusted_ca_file | dirname }}/client_etcd.crt", provider: ownca,      ownca: "{{ etcd_client_trusted_ca_file }}" }
+
+    - { when: "{{ etcd_client_cert_file }}",  csr: "{{ (etcd_client_cert_file | splitext)[0] }}.csr",             key: "{{ etcd_client_key_file }}",
+        crt: "{{ etcd_client_cert_file }}",                                 provider: ownca,      ownca: "{{ etcd_client_trusted_ca_file }}" }
+  no_log: true
+  run_once: true
+  tags: [ssl-certs]
+
+# - name: Save root certificates
+#   fetch: src={{ item.src }} dest={{ item.dest }} flat=yes mode=0400
+#   when: item.when
+#   with_items:
+#     - { when: "{{ etcd_peer_auto_tls }}",   src: "{{ (etcd_peer_trusted_ca_file | splitext)[0] }}.key",
+#         dest: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_peer.key" }
+#     - { when: "{{ etcd_peer_auto_tls }}",   src: "{{ etcd_peer_trusted_ca_file }}",
+#         dest: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_peer.crt" }
+
+#     - { when: "{{ etcd_client_auto_tls }}", src: "{{ (etcd_client_trusted_ca_file | splitext)[0] }}.key",
+#         dest: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_client.key" }
+#     - { when: "{{ etcd_client_auto_tls }}", src: "{{ etcd_client_trusted_ca_file }}",
+#         dest: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_client.crt" }
+#   run_once: true
+#   tags: [ssl-certs]
+
+# - name: Copy SSL root certificates
+#   copy:
+#     src: "{{ item.src }}"
+#     dest: "{{ item.dest }}"
+#     owner: root
+#     group: etcd
+#     mode: 0440
+#   when: item.when
+#   with_items:
+#     - { when: "{{ etcd_peer_auto_tls and not etcd_ca_peer_crt_data }}",     src: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_peer.crt",
+#         dest: "{{ etcd_peer_trusted_ca_file }}" }
+#     - { when: "{{ etcd_peer_auto_tls and not etcd_ca_peer_key_data }}",     src: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_peer.key",
+#         dest: "{{ etcd_peer_trusted_ca_file | dirname }}/peer.key" }
+#     - { when: "{{ etcd_client_auto_tls and not etcd_ca_client_crt_data }}", src: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_client.crt",
+#         dest: "{{ etcd_client_trusted_ca_file }}" }
+#     - { when: "{{ etcd_client_auto_tls and not etcd_ca_client_key_data }}", src: "{{ playbook_dir }}/files/etcd/{{ etcd_initial_cluster_token }}_client.key",
+#         dest: "{{ etcd_client_trusted_ca_file | dirname }}/client.key" }
+#   no_log: true
+#   tags: [ssl-certs]

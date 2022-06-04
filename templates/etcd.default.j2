@@ -1,0 +1,61 @@
+## etcd(1) daemon options
+## See "/usr/share/doc/etcd/Documentation/configuration.md.gz".
+
+ETCD_NAME="{{ inventory_hostname }}"
+ETCD_DATA_DIR="{{ etcd_data_dir }}"
+
+ETCD_SNAPSHOT_COUNT=120000
+ETCD_HEARTBEAT_INTERVAL=1000
+ETCD_ELECTION_TIMEOUT=10000
+
+ETCD_CIPHER_SUITES="TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+
+{% if etcd_client_url_scheme == "https" -%}
+ETCD_CERT_FILE={{ etcd_client_trusted_ca_file | dirname }}/client_etcd.crt
+ETCD_KEY_FILE={{ etcd_client_trusted_ca_file | dirname }}/client_etcd.key
+{% if etcd_client_cert_auth -%}
+ETCD_CLIENT_CERT_AUTH=true
+ETCD_TRUSTED_CA_FILE="{{ etcd_client_trusted_ca_file }}"
+{% endif -%}
+{% endif %}
+
+ETCD_ADVERTISE_CLIENT_URLS="{{ etcd_advertise_client_urls }}"
+ETCD_LISTEN_CLIENT_URLS="{{ etcd_listen_client_urls }}"
+
+{% if etcd_peer_url_scheme == "https" -%}
+ETCD_PEER_CERT_FILE={{ etcd_peer_cert_file }}
+ETCD_PEER_KEY_FILE={{ etcd_peer_key_file }}
+{% if etcd_peer_client_cert_auth -%}
+ETCD_PEER_CLIENT_CERT_AUTH=true
+ETCD_PEER_TRUSTED_CA_FILE="{{ etcd_peer_trusted_ca_file }}"
+{% endif -%}
+# ETCD_PEER_CERT_ALLOWED_CN
+{% endif %}
+
+ETCD_INITIAL_ADVERTISE_PEER_URLS="{{ etcd_initial_advertise_peer_urls }}"
+ETCD_LISTEN_PEER_URLS="{{ etcd_listen_peer_urls }}"
+
+{% if etcd_discovery == none -%}
+ETCD_INITIAL_CLUSTER="
+{%- for host in groups[etcd_peer_group] -%}
+   {% if loop.last -%}
+{{ host }}={{ etcd_peer_url_scheme }}://{{ hostvars[host]['ansible_host'] }}:{{ etcd_peer_port }}
+   {%- else -%}
+{{ host }}={{ etcd_peer_url_scheme }}://{{ hostvars[host]['ansible_host'] }}:{{ etcd_peer_port }},
+   {%- endif -%}
+{% endfor %}"
+ETCD_INITIAL_CLUSTER_TOKEN="{{ etcd_initial_cluster_token }}"
+ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"
+{% else %}
+DAEMON_ARGS="--discovery {{ etcd_discovery }}"
+{% endif %}
+
+## Force to create a new one-member cluster. It commits configuration changes
+## forcing to remove all existing members in the cluster and add itself. It needs
+## to be set to restore a backup.
+# ETCD_FORCE_NEW_CLUSTER=true
+
+### Management by command
+#
+# ETCDCTL_API=3 etcdctl --cert={{ etcd_client_cert_file }} --key={{ etcd_client_key_file }} --cacert={{ etcd_client_trusted_ca_file }} --endpoints https://127.0.0.1:2379 member list -w table
+#

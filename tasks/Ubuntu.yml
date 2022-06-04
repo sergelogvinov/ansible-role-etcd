@@ -1,0 +1,6 @@
+---
+
+- name: 'Install etcd'
+  apt:
+    name: "{{ etcd_packages }}"
+    state: 'latest'

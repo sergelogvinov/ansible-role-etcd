@@ -1,0 +1,44 @@
+---
+
+etcd_packages: ['etcd']
+etcd_enable: true
+etcd_env_file: /etc/default/etcd
+etcd_data_dir: /var/lib/etcd/cluster
+
+etcd_discovery: ~
+# etcd_discovery: 'https://discovery.etcd.io/$cluster-uid'
+
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_peer_group: etcd-cluster
+etcd_auto_tls: true
+
+etcd_initial_cluster_state: new
+etcd_initial_cluster_token: etcd-cluster-1
+
+etcd_advertise_ip: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+etcd_initial_advertise_peer_urls: "{{ etcd_peer_url_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_peer_port }}"
+etcd_listen_peer_urls:  "{{ etcd_peer_url_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_peer_port }}"
+etcd_advertise_client_urls: "{{ etcd_client_url_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_client_port }}"
+etcd_listen_client_urls: "{{ etcd_client_url_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_client_port }},https://127.0.0.1:2379,https://[::1]:2379"
+
+etcd_cert_key_size: 256
+etcd_cert_key_type: Ed25519
+etcd_cert_key_days: 3650
+
+etcd_client_url_scheme: https
+etcd_client_cert_auth: true
+etcd_client_cert_file: "/etc/ssl/etcd/client_{{ inventory_hostname }}.crt"
+etcd_client_key_file: "/etc/ssl/etcd/client_{{ inventory_hostname }}.key"
+etcd_client_trusted_ca_file: "/etc/ssl/etcd/client.crt"
+
+etcd_peer_url_scheme: https
+etcd_peer_client_cert_auth: true
+etcd_peer_cert_file: "/etc/ssl/etcd/peer_{{ inventory_hostname }}.crt"
+etcd_peer_key_file: "/etc/ssl/etcd/peer_{{ inventory_hostname }}.key"
+etcd_peer_trusted_ca_file: "/etc/ssl/etcd/peer.crt"
+
+etcd_ca_client_crt_data: ~
+etcd_ca_client_key_data: ~
+etcd_ca_peer_crt_data: ~
+etcd_ca_peer_key_data: ~

@@ -1,0 +1,31 @@
+---
+
+- include_tasks: Ubuntu.yml
+  when: ansible_distribution == "Ubuntu"
+
+- include_tasks: Debian.yml
+  when: ansible_distribution == "Debian"
+
+- import_tasks: certs.yml
+  when: etcd_auto_tls or etcd_ca_peer_crt_data or etcd_ca_client_crt_data
+
+- name: Update config
+  template:
+    src: "etcd.default.j2"
+    dest: "{{ etcd_env_file }}"
+    owner: root
+    group: root
+    mode: 0644
+  register: etcd_config
+  tags: [ssl-certs]
+
+- name: Enable/Disable etcd service
+  service:
+    name: etcd
+    enabled: "{{ etcd_enable }}"
+
+- name: Restart etcd service
+  service:
+    name: etcd
+    state: "{% if etcd_enable %}restarted{% else %}stopped{% endif %}"
+  when: etcd_config.changed

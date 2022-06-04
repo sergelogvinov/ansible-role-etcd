@@ -1,0 +1,25 @@
+---
+
+- name: Pin unstable repository
+  copy:
+    content: |
+      Package: *
+      Pin: release a=unstable
+      Pin-Priority: 1
+    dest: /etc/apt/preferences.d/unstable
+  when: false
+
+- name: Add unstable repository
+  copy:
+    content: "deb http://http.debian.net/debian/ unstable main\n"
+    dest: /etc/apt/sources.list.d/debian_unstable.list
+  when: false
+  notify: etcd-apt-get-update
+
+- meta: flush_handlers
+  when: false
+
+- name: Install etcd
+  apt:
+    name: "{{ etcd_packages }}"
+    state: 'latest'
